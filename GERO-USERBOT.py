@@ -9,6 +9,7 @@ import re
 from datetime import datetime
 from telethon import TelegramClient, events, Button
 from telethon.errors.rpcerrorlist import FloodWaitError, MessageDeleteForbiddenError
+import os
 
 # ------------- Конфигурация -------------------
 api_id = API_ID  # Ваш api_id
@@ -17,16 +18,25 @@ bot_token = None  # Можно оставить None
 SESSION_NAME = 'userbot_session'
 LOGGING_LEVEL = logging.INFO
 PREFIX_FILE = 'prefix_config.json'  # Файл для хранения префикса...
+DOWNLOAD_DIR = '/storage/emulated/0/.GERO-USERBOT'  # Путь для сохранения файлов
 # ----------------------------------------------
 logging.basicConfig(level=LOGGING_LEVEL, format='[%(levelname)s] %(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 client = TelegramClient(SESSION_NAME, api_id, api_hash)
-WEATHER_API_KEY = 'WEATHER_API'  # Вставьте сюда ваш ключ OpenWeatherMap
+WEATHER_API_KEY = 'WEATHER-API-KEY'  # Ключ OpenWeatherMap
 WEATHER_API_URL = 'https://api.openweathermap.org/data/2.5/weather'
 start_time = time.time()  # Для uptime
 
+# Создание скрытой папки, если не существует
+if not os.path.exists(DOWNLOAD_DIR):
+    try:
+        os.makedirs(DOWNLOAD_DIR)
+        logger.info(f"Создана папка для загрузок: {DOWNLOAD_DIR}")
+    except Exception as e:
+        logger.error(f"Ошибка создания папки {DOWNLOAD_DIR}: {e}")
+
 HELP_TEXT = """
-Команды GERO-UserBot (префикс команд можно менять с помощью команды setprefix):
+Команды Gero-UserBot (префикс команд можно менять с помощью команды setprefix):
 {prefix}help - Показать это сообщение
 {prefix}echo <текст> - Повторить сообщение
 {prefix}rand - Сгенерировать случайное число в диапазоне
@@ -135,7 +145,6 @@ async def fetch_anecdote() -> str:
                 if resp.status != 200:
                     return "Не удалось получить анекдот, попробуйте позже."
                 html = await resp.text()
-                # Анекдот содержится в div с классом text
                 anecdotes = re.findall(r'<div class="text">([^<]+)</div>', html)
                 if anecdotes:
                     return anecdotes[0].strip()
@@ -203,9 +212,12 @@ async def exec_command(event, cmd, arg_text):
         if not reply or not reply.photo:
             await event.respond("Пожалуйста, ответьте на сообщение с фотографией.")
             return
-        path = await reply.download_media()
-        await event.respond(file=path, force_document=False)
-        await event.delete()
+        try:
+            path = await reply.download_media(file=DOWNLOAD_DIR)
+            await event.respond(file=path, force_document=False)
+            await event.delete()
+        except Exception as e:
+            await event.respond(f"Ошибка при загрузке медиа: {e}")
     elif cmd == 'setprefix':
         new_prefix = arg_text.strip()
         if len(new_prefix) != 1:
@@ -252,6 +264,9 @@ async def exec_command(event, cmd, arg_text):
             await event.respond("Спам завершён.")
         except ValueError:
             await event.respond(f"Ошибка в параметрах. Использование: {command_prefix}spam <текст> <кол-во> <интервал в секундах>")
+        except FloodWaitError as e:
+            await event.respond(f"Превышен лимит запросов, ожидание {e.seconds} секунд.")
+            await asyncio.sleep(e.seconds)
     elif cmd == 'repeatcmd':
         try:
             parts = arg_text.split(' ', 1)
@@ -272,6 +287,9 @@ async def exec_command(event, cmd, arg_text):
                 await asyncio.sleep(1)
         except ValueError:
             await event.respond(f"Ошибка в параметрах. Использование: {command_prefix}repeatcmd <кол-во> <команда>")
+        except FloodWaitError as e:
+            await event.respond(f"Превышен лимит запросов, ожидание {e.seconds} секунд.")
+            await asyncio.sleep(e.seconds)
     elif cmd == 'run':
         if not arg_text:
             await event.respond("Введите команду для выполнения с помощью run.")
@@ -289,10 +307,10 @@ async def exec_command(event, cmd, arg_text):
             arg_text2 = args2[0] if args2 else ''
             await exec_command(event, cmd2, arg_text2)
             if responses:
-                first_response = responses[0]
+                first_response = responses
                 if isinstance(first_response, str) and first_response.startswith(command_prefix):
                     inner_cmd, *inner_args = first_response[len(command_prefix):].split(' ', 1)
-                    inner_arg_text = inner_args[0] if inner_args else ''
+                    inner_arg_text = inner_args if inner_args else ''
                     await exec_command(event, inner_cmd, inner_arg_text)
         finally:
             event.respond = old_respond
